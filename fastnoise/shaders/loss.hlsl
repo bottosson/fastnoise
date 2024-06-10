@@ -92,14 +92,14 @@ float K2(float4 x, float4 y)
 	return K;
 }
 
-float combineFilter(int3 index, float filterX, float filterY, float filterZ)
+float combineFilter(int3 index, float filterXY, float filterZ)
 {
 	float F = 0.0f;
 	if (_LossCB.separate)
 	{
 		if (index.z == 0)
 		{
-			F += filterX * filterY* _LossCB.separateWeight;
+			F += filterXY * _LossCB.separateWeight;
 		}
 		if (index.x == 0 && index.y == 0)
 		{
@@ -108,7 +108,7 @@ float combineFilter(int3 index, float filterX, float filterY, float filterZ)
 	}
 	else 
 	{
-		F = filterX * filterY * filterZ;
+		F = filterXY * filterZ;
 	}
 	return F;
 }
@@ -116,20 +116,17 @@ float combineFilter(int3 index, float filterX, float filterY, float filterZ)
 // Currently 3D box filter
 float doubledFilter(int3 i, int3 filterMin, int3 filterMax, int3 filterOffset)
 {
-	float3 filter = 0.0f;
-	if (i.x >= filterMin.x && i.x <= filterMax.x)
+	float filterXY = 0.f;
+	float filterZ = 0.f;
+	if (i.x >= filterMin.x && i.x <= filterMax.x && i.y >= filterMin.y && i.y <= filterMax.y)
 	{
-		filter.x = Filter[i.x + filterOffset.x];
-	}
-	if (i.y >= filterMin.y && i.y <= filterMax.y)
-	{
-		filter.y = Filter[i.y + filterOffset.y];
+		filterXY = Filter[(i.x + filterOffset.x) * filterOffset.y + i.y + filterOffset.x];
 	}
 	if (i.z >= filterMin.z && i.z <= filterMax.z)
 	{
-		filter.z = Filter[i.z + filterOffset.z];
+		filterZ = Filter[i.z + filterOffset.z];
 	}
-	return combineFilter(i, filter.x, filter.y, filter.z);
+	return combineFilter(i, filterXY, filterZ);
 }
 
 [numthreads(8, 8, 1)]
@@ -151,17 +148,15 @@ void Loss(uint3 DTid : SV_DispatchThreadID)
 
 	for (int i = filterMin.x; i <= filterMax.x; ++i)
 	{
-		float filterX = Filter[i + filterOffset.x];
-
 		for (int j = filterMin.y; j <= filterMax.y; ++j)
 		{
-			float filterY = Filter[j + filterOffset.y];
+			float filterXY = Filter[(i + filterOffset.x) * filterOffset.y + j + filterOffset.x];
 
 			for (int k = filterMin.z; k <= filterMax.z; ++k) {
 
 				float filterZ = Filter[k + filterOffset.z];
 
-				float F = combineFilter(int3(i, j, k), filterX, filterY, filterZ);
+				float F = combineFilter(int3(i, j, k), filterXY, filterZ);
 
 				float4 neighbourValue = SampleTexture[uint3(index + int3(i, j, k)) % textureSize];
 				deltaLoss += F * (K2(otherValue, neighbourValue) - K2(currentValue, neighbourValue));

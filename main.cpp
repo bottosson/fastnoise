@@ -586,7 +586,57 @@ int main(int argc, char** argv)
         fastnoise::FilterType filterTypes[3] = { fastnoiseContext->m_input.variable_filterX, fastnoiseContext->m_input.variable_filterY, fastnoiseContext->m_input.variable_filterZ };
         fastnoise::float4 filterParams[3] = { fastnoiseContext->m_input.variable_filterXparams, fastnoiseContext->m_input.variable_filterYparams, fastnoiseContext->m_input.variable_filterZparams };
 
-        for (int c = 0; c < 3; c++)
+        // saving xy filter as a 2d kernel isteand
+        {
+            fastnoise::float4 filterParam = filterParams[0];
+
+            // rescaling filter to match hexagonal grid
+            float diagonalScale = 1.f / sqrtf(3);
+            float sigma = filterParam[0] / sqrtf(0.5f + 0.5f*diagonalScale* diagonalScale);
+
+            std::vector<float> filter;
+
+            // switched to simpler filter, analytical gaussian
+            // to make anisotropy easier
+            // 
+            // widen to integrate over pixels. Instead of box pixels, this assumes gaussian filter with same variance as box shape
+            // also doubling, but not sure why?
+            float variance = 2 * (sigma * sigma + 1.f / 12.f);
+
+            int filterSize = roundf(4.f * sqrtf(variance));
+
+
+            filter.resize((2 * filterSize + 1)*(2 * filterSize + 1));
+            float sum = 0.f;
+            for (int i = -filterSize; i <= filterSize; i++)
+            {
+                for (int j = -filterSize; j <= filterSize; j++)
+                {
+                    float x = sqrtf(0.5f) * (i - j);
+                    float y = diagonalScale*sqrtf(0.5f) * (i + j);
+
+                    float v = expf(-(x*x + y*y) / (2.f * variance));
+                    filter[(filterSize + i)* (2 * filterSize + 1) + (filterSize + j)] = v;
+                    sum += v;
+                }
+            }
+
+            fastnoiseContext->m_input.variable_filterMin[0] = -filterSize;
+            fastnoiseContext->m_input.variable_filterMax[0] = filterSize;
+            fastnoiseContext->m_input.variable_filterOffset[0] = filterSize;
+
+            fastnoiseContext->m_input.variable_filterMin[1] = -filterSize;
+            fastnoiseContext->m_input.variable_filterMax[1] = filterSize;
+            fastnoiseContext->m_input.variable_filterOffset[1] = (2 * filterSize + 1);
+
+            for (float& v : filter)
+                filterData.push_back(v / sum);
+
+
+        }
+
+
+        for (int c = 2; c < 3; c++)
         {
             fastnoise::FilterType filterType = filterTypes[c];
             fastnoise::float4 filterParam = filterParams[c];
@@ -660,38 +710,32 @@ int main(int argc, char** argv)
             {
                 float sigma = filterParam[0];
 
-                static const float c_energy = 0.995f;
-
-                // Construct the filter f before doubling and apply a cutoff to that.
-                // This avoids negative lobes in the doubled filter.
-                float scale = sqrtf(0.5f) / sigma;
-                float total = 0.0f;
                 std::vector<float> filter;
-                for (int i = 0; total < c_energy; ++i)
+                
+                // switched to simpler filter, analytical gaussian
+                // main reason is to make anisotropy easier
+                // 
+                // widen to integrate over pixels. Instead of box pixels, this assumes gaussian filter with same variance as box shape
+                // also doubling, but not sure why?
+                float variance = 2 * (sigma * sigma + 1.f/12.f); 
+
+                int filterSize = roundf(4.f * sqrtf(variance));
+
+                filter.resize(2* filterSize + 1);
+                float sum = 0.f;
+                for (int i = -filterSize; i <= filterSize; i++)
                 {
-                    float filterVal = 0.5f * (erff(scale * (i + 0.5f)) - erff(scale * (i - 0.5f)));
-                    filter.push_back(filterVal);
-                    total += (i > 0 ? 2.0f : 1.0f) * filterVal;
+                    float v = expf(-i * i / (2.f * variance));
+                    filter[filterSize + i] = v;
+                    sum += v;
                 }
-
-                // Determines the min/max extents of the filter (inclusive)
-                int filterSize = 2 * ((int)filter.size() - 1);
-
+                
                 fastnoiseContext->m_input.variable_filterMin[c] = -filterSize;
                 fastnoiseContext->m_input.variable_filterMax[c] = filterSize;
                 fastnoiseContext->m_input.variable_filterOffset[c] = (int)filterData.size() + filterSize;
 
-                // Calculate the convolution of the filter f with itself
-                for (int i = -filterSize; i <= filterSize; i++)
-                {
-                    float filterValue = 0.0f;
-                    for (int j = std::max(0, i) - (int)filter.size() + 1; j < (int)filter.size() + std::min(0, i); ++j)
-                    {
-                        filterValue += filter[abs(j)] * filter[abs(i - j)];
-                    }
-                    filterData.push_back(filterValue);
-
-                }
+                for (float& v : filter)
+                    filterData.push_back(v / sum);
 
                 break;
             }
